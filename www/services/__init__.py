@@ -1,3 +1,4 @@
+from .api_retriever import *
 from .biblionetwork import *
 from .cocmatrix import *
 from .couplingmap import *
@@ -11,7 +12,9 @@ from .networkplot import *
 from .parsers import *
 from .plotlydownload import *
 from .savereport import *
+from .standardizer import *
 from .tabletag import *
 from .termextraction import *
 from .thematicmap import *
 from .utils import *
+from .validator import *

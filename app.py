@@ -47,11 +47,11 @@
 
 
 # Import necessary libraries for better performance - avoid importing everything
-import tempfile
 import os
 import requests
 import functools
 from datetime import datetime
+from pathlib import Path
 import pandas as pd
 import io
 from functions import *
@@ -64,9 +64,8 @@ from shiny import reactive, render
 from shinywidgets import render_widget
 from shiny.express import ui, input, render
 
-# Setup the Directory for static assets - optimized for performance
-base_dir = tempfile.gettempdir()  # Use system temp dir instead of creating new temp file
-express.app_opts(static_assets=base_dir, debug=False)
+# Setup the directory for static assets relative to the app file.
+app_root = Path(__file__).resolve().parent
 
 # --- Toggle button ---
 # This button toggles the visibility of the sidebar(s) in the UI.
@@ -81,7 +80,7 @@ ui.page_opts(
 
 # --- UI and UX experience ---
 # Include custom CSS for the app's appearance.
-ui.include_css("www/static/biblioshiny.css")
+ui.include_css(app_root / "www/static/biblioshiny.css")
 
 # --- Header ---
 # The header bar contains the logo, app name, and a set of dropdown menus for notifications, help, donations, and credits.
@@ -252,29 +251,31 @@ with ui.tags.div(id="mainContent", class_="main-content"):
 
         # --- Welcome/Info Page ---
         with ui.nav_panel("None", value="info"):
-            ui.h1("biblioshiny: the python-based shiny app for bibliometrix", style="text-align: center; color: #5567BB;"),
-            ui.div(
-                ui.img(src="https://www.bibliometrix.org/logo_new.png", class_="logo", width="400px"),
-                style="text-align: center;"
-            ),
-            ui.div(
-                ui.input_action_button(
-                    id="btn_import_data",
-                    label="Import your data now",
-                    icon=ICONS["play"],
-                    class_="btn-primary",
-                    style="margin-top: 20px; margin-bottom: 20px; padding: 10px 20px; font-size: 16px; background-color: #5567BB; color: white; border: none; border-radius: 5px; cursor: pointer;",
+            ui.tags.div(
+                ui.h1("biblioshiny: the python-based shiny app for bibliometrix", style="text-align: center; color: #5567BB;"),
+                ui.div(
+                    ui.img(src="https://www.bibliometrix.org/logo_new.png", class_="logo", width="400px"),
+                    style="text-align: center;"
                 ),
-                ui.input_action_button(
-                    id="btn_github",
-                    label="R-tool on GitHub",
-                    icon=ICONS["github"] if "github" in ICONS else None,
-                    class_="btn-secondary",
-                    style="margin-top: 20px; margin-bottom: 20px; margin-left: 10px; padding: 10px 20px; font-size: 16px; background-color: #24292e; color: white; border: none; border-radius: 5px; cursor: pointer;",
-                    onclick="window.open('https://github.com/massimoaria/bibliometrix', '_blank')",
+                ui.div(
+                    ui.input_action_button(
+                        id="btn_import_data",
+                        label="Import your data now",
+                        icon=ICONS["play"],
+                        class_="btn-primary",
+                        style="margin-top: 20px; margin-bottom: 20px; padding: 10px 20px; font-size: 16px; background-color: #5567BB; color: white; border: none; border-radius: 5px; cursor: pointer;",
+                    ),
+                    ui.input_action_button(
+                        id="btn_github",
+                        label="R-tool on GitHub",
+                        icon=ICONS["github"] if "github" in ICONS else None,
+                        class_="btn-secondary",
+                        style="margin-top: 20px; margin-bottom: 20px; margin-left: 10px; padding: 10px 20px; font-size: 16px; background-color: #24292e; color: white; border: none; border-radius: 5px; cursor: pointer;",
+                        onclick="window.open('https://github.com/massimoaria/bibliometrix', '_blank')",
+                    ),
+                    style="text-align: center;"
                 ),
-                style="text-align: center;"
-            ),
+            )
             ui.markdown(
                 """
                 <div style="margin-left:80px; margin-right:80px; color:#888; font-size:18px; text-align:center;">
@@ -586,7 +587,7 @@ with ui.tags.div(id="mainContent", class_="main-content"):
             
             report_choices = reactive.Value({})
             report_excel = reactive.Value(io.BytesIO())
-            selection = reactive.Value([])
+            selection = reactive.Value(())
             dpi = reactive.Value(300)
             height = reactive.Value(7)
             gemini_api_key = reactive.Value("")
@@ -802,6 +803,8 @@ with ui.tags.div(id="mainContent", class_="main-content"):
                     @reactive.event(input.save_modal_completeness)
                     def save_dataframe_image():
                         _, _, fig = get_table(database, df, dpi=dpi.get(), modal=False)
+                        if fig is None:
+                            return ui.notification_show("⚠️ No data is loaded yet.", duration=5, close_button=False)
                         fig.write_image(completeness_table_image_path)
                         return ui.notification_show(f"✅ Missing data image saved into {completeness_table_image_path}", duration=5, close_button=False)
 
@@ -854,7 +857,62 @@ with ui.tags.div(id="mainContent", class_="main-content"):
                 ),
 
         with ui.nav_panel("None", value="API"):
-            ui.h3("🚧 Warning: API is under construction 🚧")
+            ui.h3("🌐 Live API Extraction (OpenAlex)", style="color: #5567BB;")
+            ui.p("Query the OpenAlex database directly and automatically convert results to the standardized format.")
+            
+            with ui.layout_sidebar(fillable=False, fill=False):
+                with ui.sidebar(id="sidebar_api_data", position="right"):
+                    ui.h5("API Search", style="color: #5567BB;")
+                    ui.input_text("api_query", "Search Query:", placeholder="e.g., machine learning")
+                    ui.input_numeric("api_max_results", "Max Results:", value=50, min=10, max=500, step=10)
+                    ui.input_action_button("api_search_btn", "Search OpenAlex", icon=ICONS["play"])
+                    ui.p("This will fetch data, apply standardization, and load it into the application.", style="color: gray; font-size: 10px;")
+
+                @reactive.effect
+                @reactive.event(input.api_search_btn)
+                def execute_api_search():
+                    query = input.api_query()
+                    max_results = input.api_max_results()
+                    
+                    if not query:
+                        ui.notification_show("⚠️ Please enter a search query.", duration=5, type="warning")
+                        return
+                    
+                    ui.modal_show(create_loading_modal("API data"))
+                    
+                    try:
+                        # 1. Extract
+                        retriever = OpenAlexRetriever()
+                        raw_data = retriever.fetch(query, max_results=max_results)
+                        
+                        if not raw_data:
+                            ui.notification_show("⚠️ No results found.", duration=5, type="warning")
+                            return
+                            
+                        # 2. Transform (Standardize)
+                        standardizer = OpenAlexStandardizer()
+                        standardized_df = standardizer.standardize(raw_data)
+                        
+                        # 3. Load
+                        df.set(standardized_df)
+                        reset_all_analyses()
+                        
+                        ui.notification_show(f"✅ Successfully loaded {len(standardized_df)} documents!", duration=5, type="message")
+                    except Exception as e:
+                        ui.notification_show(f"❌ Error during API extraction: {str(e)}", duration=10, type="error")
+                    finally:
+                        ui.modal_remove()
+
+                @render.express
+                def show_api_data_table():
+                    data = df.get()
+                    if data is not None and len(data) > 0 and 'DB' in data.columns and (data['DB'] == 'OPENALEX').any():
+                        ui.h4("Preview of Standardized Data", style="color: #5567BB;")
+                        ui.p(f"Showing the first {min(5, len(data))} rows:")
+                        preview_df = data[['UT', 'TI', 'AU', 'PY', 'SO', 'SR']].head(5)
+                        ui.HTML(preview_df.to_html(classes="table table-striped table-hover", index=False))
+                    elif data is None:
+                        ui.p("No data loaded via API yet. Use the sidebar to search OpenAlex.")
         
         with ui.nav_panel("None", value="collections"):
             ui.h3("🚧 Warning: Merge Collection is under construction 🚧")
@@ -8185,9 +8243,8 @@ with ui.tags.div(id="mainContent", class_="main-content"):
 
 # --- Sidebar Management ---
 @render.express()
-@reactive.event(input.start_button)
 def toggle_sidebar():
-    with ui.tags.div(id="sidebar_2", class_="custom-sidebar"):
+    with ui.tags.div(id="sidebar_2", class_="custom-sidebar sidebar-hidden"):
         with ui.accordion(id="sidebar_accordion_data", multiple=False, open=False):
             # Info Section
             with ui.accordion_panel("Biblioshiny", icon=ICONS["home_colored"]):
@@ -8344,9 +8401,10 @@ ui.tags.script("""
     });
     observer.observe(document.body, { childList: true, subtree: true });
 
-    // Show both sidebars when 'start_button' is clicked
+    // Show both sidebars when 'start_button' or 'api_search_btn' is clicked
     document.addEventListener("click", function(e) {
-        if (e.target && e.target.id === "start_button") {
+        const btn = e.target.closest('button');
+        if (btn && (btn.id === "start_button" || btn.id === "api_search_btn")) {
             setSidebarState(true);
         }
     });
